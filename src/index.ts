@@ -1,6 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import reviewRoute from './routes/review.route';
+import sdetRoute from './routes/sdet.route';
 
 dotenv.config();
 
@@ -9,6 +10,7 @@ const PORT = process.env.PORT || 3001;
 
 app.use(express.json());
 app.use('/api', reviewRoute);
+app.use('/api/sdet', sdetRoute);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'sdet-apis' });
@@ -17,3 +19,5 @@ app.get('/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`SDET APIs running on port ${PORT}`);
 });
+
+process.stdin.resume();

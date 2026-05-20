@@ -137,15 +137,27 @@ export class PlaywrightService {
     async sendMessage(message: string, tabCount: number): Promise<void> {
         if (!this.page) throw new Error('Browser not initialized');
 
-        // Tab to chat input
+        // Normalize line endings
+        message = message.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+        const parts = message.split('<<<PASTE>>>');
+        const typePart = parts[0];
+        const pastePart = parts[1] || '';
+
+        // Tab to chat input and type the first part humanly
         await this.tabToElement(tabCount);
         await this.wait(400, 900);
+        await this.typeHumanLike(typePart);
 
-        // Type message with human behavior
-        await this.typeHumanLike(message);
+        // Paste the remainder instantly via execCommand
+        if (pastePart) {
+            await this.page!.evaluate((text: string) => {
+                document.execCommand('insertText', false, text);
+            }, pastePart);
+        }
 
-        // Re-read pause — scales with message length
-        const reReadTime = Math.min(message.length * 15, 3000);
+        // Re-read pause — scales with full message length
+        const reReadTime = Math.min((typePart + pastePart).length * 15, 3000);
         await this.wait(reReadTime * 0.7, reReadTime * 1.3);
 
         // Press Enter
@@ -159,6 +171,9 @@ export class PlaywrightService {
         const RESPONSE_SELECTOR = process.env.CHAT_RESPONSE_SELECTOR!;
         const startTime = Date.now();
 
+        let stableResponse = '';
+        let stableCount = 0;
+
         while (Date.now() - startTime < POLL_TIMEOUT_MS) {
             await this.page.waitForTimeout(POLL_INTERVAL_MS);
 
@@ -168,19 +183,56 @@ export class PlaywrightService {
             const lastResponse = await messages[messages.length - 1].innerText();
 
             if (lastResponse && lastResponse.trim() !== lastMessage.trim()) {
-                console.log('Response received');
-                return lastResponse;
+                if (lastResponse === stableResponse) {
+                    stableCount++;
+                } else {
+                    stableResponse = lastResponse;
+                    stableCount = 0;
+                }
+
+                if (stableCount >= 1) {
+                    if (!stableResponse.includes('{') || !stableResponse.includes('}')) {
+                        stableCount = 0;
+                        stableResponse = '';
+                        continue;
+                    }
+                    console.log('Response received');
+                    return stableResponse;
+                }
             }
         }
 
         throw new Error('Timed out waiting for tester response');
     }
 
+    async deleteCurrentChat(): Promise<void> {
+        try {
+            const menuBtn = this.page!.locator('div.relative.group:has(a[aria-current="page"]) button[aria-haspopup="menu"]');
+            await menuBtn.hover();
+            await menuBtn.click();
+
+            const deleteItem = this.page!.locator('[data-testid="delete-chat-trigger"]');
+            await deleteItem.waitFor({ state: 'visible', timeout: 5000 });
+            await deleteItem.click();
+
+            const confirmBtn = this.page!.locator('[data-testid="delete-modal-confirm"]');
+            await confirmBtn.waitFor({ state: 'visible', timeout: 5000 });
+            await confirmBtn.click();
+
+            await this.page!.waitForTimeout(1000);
+        } catch (err) {
+            console.warn('[Proxi] deleteCurrentChat failed (non-critical):', err);
+        }
+    }
+
     async close(): Promise<void> {
+        if (this.page) {
+            await this.page.close();
+            this.page = null;
+        }
         if (this.browser) {
             await this.browser.close();
             this.browser = null;
-            this.page = null;
         }
     }
 }
